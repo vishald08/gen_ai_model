@@ -1,0 +1,54 @@
+name: CI/CD Pipeline - GenAI App
+
+on:
+  push:
+    branches: [ "master", "main" ]
+
+jobs:
+  build-and-push-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/gen_ai_model:latest
+
+  deploy-to-ec2:
+    needs: build-and-push-docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH to EC2 and Deploy
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            # Pull latest image from Docker Hub
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/gen_ai_model:latest
+
+            # Stop and remove existing container if running
+            docker stop gen_ai_app || true
+            docker rm gen_ai_app || true
+
+            # Run new container attached to app-network
+            docker run -d \
+              -p 80:8080 \
+              --network app-network \
+              -e SPRING_DATASOURCE_URL="jdbc:mysql://mysql-db:3306/gen_ai_model?allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true&useSSL=false" \
+              -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+              -e MAIL_PASSWORD="${{ secrets.MAIL_PASSWORD }}" \
+              --restart always \
+              --name gen_ai_app \
+              ${{ secrets.DOCKERHUB_USERNAME }}/gen_ai_model:latest
