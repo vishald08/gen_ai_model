@@ -1,16 +1,25 @@
-# Stage 1: Build JAR/WAR using Maven
+# Stage 1: Build the WAR/JAR
 FROM maven:3.9.6-eclipse-temurin-17 AS build
 WORKDIR /app
 COPY pom.xml .
 COPY src ./src
 RUN mvn clean package -DskipTests
 
-# Stage 2: Run Application using lightweight JRE
-FROM eclipse-temurin:17-jre-alpine
+# Stage 2: Explode the package and Run
+FROM eclipse-temurin:17-jdk-alpine
 WORKDIR /app
 
-# Ye line target folder ke andar se *.jar ya *.war jo bhi bane use app.jar bana degi
-COPY --from=build /app/target/*.[jw]ar /app/app.jar
+# Install unzip to explode the archive
+RUN apk add --no-cache unzip
+
+# Copy build artifact
+COPY --from=build /app/target/*.[jw]ar /app/app.war
+
+# Extract WAR/JAR into /app/exploded directory
+RUN mkdir /app/exploded && unzip -q /app/app.war -d /app/exploded
 
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+
+# Run Spring Boot in Exploded Mode
+WORKDIR /app/exploded
+ENTRYPOINT ["java", "-cp", ".:WEB-INF/classes:WEB-INF/lib/*", "org.springframework.boot.loader.launch.WarLauncher"]
